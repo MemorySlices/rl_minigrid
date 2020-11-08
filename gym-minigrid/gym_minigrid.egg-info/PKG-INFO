@@ -1,0 +1,11 @@
+Metadata-Version: 1.0
+Name: gym-minigrid
+Version: 1.0.1
+Summary: Minimalistic gridworld package for OpenAI Gym
+Home-page: https://github.com/maximecb/gym-minigrid
+Author: UNKNOWN
+Author-email: UNKNOWN
+License: UNKNOWN
+Description: UNKNOWN
+Keywords: memory,environment,agent,rl,openaigym,openai-gym,gym
+Platform: UNKNOWN

@@ -1,6 +1,7 @@
 import numpy
 import torch
 import torch.nn.functional as F
+import numpy as np
 
 from torch_ac.algos.base import BaseAlgo
 
@@ -11,11 +12,11 @@ class PPOAlgo(BaseAlgo):
     def __init__(self, envs, acmodel, device=None, num_frames_per_proc=None, discount=0.99, lr=0.001, gae_lambda=0.95,
                  entropy_coef=0.01, value_loss_coef=0.5, max_grad_norm=0.5, recurrence=4,
                  adam_eps=1e-8, clip_eps=0.2, epochs=4, batch_size=256, preprocess_obss=None,
-                 reshape_reward=None):
+                 reshape_reward=None, args=None):
         num_frames_per_proc = num_frames_per_proc or 128
 
         super().__init__(envs, acmodel, device, num_frames_per_proc, discount, lr, gae_lambda, entropy_coef,
-                         value_loss_coef, max_grad_norm, recurrence, preprocess_obss, reshape_reward)
+                         value_loss_coef, max_grad_norm, recurrence, preprocess_obss, reshape_reward, args)
 
         self.clip_eps = clip_eps
         self.epochs = epochs
@@ -26,7 +27,7 @@ class PPOAlgo(BaseAlgo):
         self.optimizer = torch.optim.Adam(self.acmodel.parameters(), lr, eps=adam_eps)
         self.batch_num = 0
 
-    def update_parameters(self, exps):
+    def update_parameters(self, exps, args):
         # Collect experiences
 
         for _ in range(self.epochs):
@@ -55,14 +56,20 @@ class PPOAlgo(BaseAlgo):
                 for i in range(self.recurrence):
                     # Create a sub-batch of experience
 
-                    sb = exps[inds + i]
+                    sb = exps[(inds + i).astype(int)]
 
                     # Compute loss
 
-                    if self.acmodel.recurrent:
-                        dist, value, memory = self.acmodel(sb.obs, memory * sb.mask)
+                    if(args.use_neural_map==0):
+                        if self.acmodel.recurrent:
+                            dist, value, memory = self.acmodel(sb.obs, memory * sb.mask)
+                        else:
+                            dist, value = self.acmodel(sb.obs)
                     else:
-                        dist, value = self.acmodel(sb.obs)
+                        if self.acmodel.recurrent:
+                            dist, value, memory, M = self.acmodel(sb.M, sb.obs, memory * sb.mask, sb.pos)
+                        else:
+                            dist, value, M = self.acmodel(sb.M, sb.obs, sb.pos)
 
                     entropy = dist.entropy().mean()
 
@@ -90,6 +97,8 @@ class PPOAlgo(BaseAlgo):
 
                     if self.acmodel.recurrent and i < self.recurrence - 1:
                         exps.memory[inds + i + 1] = memory.detach()
+                        if(args.use_neural_map==1):
+                            exps.M[inds + i + 1] = M.detach()
 
                 # Update batch values
 
@@ -102,7 +111,7 @@ class PPOAlgo(BaseAlgo):
                 # Update actor-critic
 
                 self.optimizer.zero_grad()
-                batch_loss.backward()
+                self.backward = batch_loss.backward()
                 grad_norm = sum(p.grad.data.norm(2).item() ** 2 for p in self.acmodel.parameters()) ** 0.5
                 torch.nn.utils.clip_grad_norm_(self.acmodel.parameters(), self.max_grad_norm)
                 self.optimizer.step()
@@ -127,7 +136,7 @@ class PPOAlgo(BaseAlgo):
 
         return logs
 
-    def _get_batches_starting_indexes(self):
+    def    _get_batches_starting_indexes(self):
         """Gives, for each batch, the indexes of the observations given to
         the model and the experiences used to compute the loss at first.
 

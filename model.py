@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions.categorical import Categorical
 import torch_ac
+import copy
 
 
 # Function from https://github.com/ikostrikov/pytorch-a2c-ppo-acktr/blob/master/model.py
@@ -109,7 +110,7 @@ class ACModel(nn.Module, torch_ac.RecurrentACModel):
 
 
 class NMAPModel(nn.Module, torch_ac.RecurrentACModel):
-    def __init__(self, obs_space, action_space, use_memory=False, use_text=False):
+    def __init__(self, obs_space, action_space, use_memory=False, use_text=False, mapH=0, mapW=0):
         super().__init__()
 
         # Decide which components are enabled
@@ -128,6 +129,8 @@ class NMAPModel(nn.Module, torch_ac.RecurrentACModel):
         )
         n = obs_space["image"][0]
         m = obs_space["image"][1]
+        self.h = mapH
+        self.w = mapW
         # the feature dimension of Neural Map
         self.neural_map_dim = 32
         self.image_embedding_size = ((n-1)//2-2)*((m-1)//2-2)*64
@@ -153,13 +156,11 @@ class NMAPModel(nn.Module, torch_ac.RecurrentACModel):
             nn.Conv2d(self.neural_map_dim, 8, (3, 3)),
             nn.ReLU(),
             nn.Conv2d(8, 8, (3, 3)),
-            nn.ReLU(),
-            nn.Conv2d(8, 8, (3, 3)),
             nn.ReLU()
         )
-        self.read_embedding_size = (n-6) * (m-6) * 64
+        self.read_embedding_size = (self.h-4) * (self.w-4) * 8
         self.read_Linear = nn.Sequential(
-            nn.Linear(64, 128),
+            nn.Linear(self.read_embedding_size, 128),
             nn.ReLU(),
             nn.Linear(128, self.neural_map_dim)
         )
@@ -209,26 +210,30 @@ class NMAPModel(nn.Module, torch_ac.RecurrentACModel):
         return tmp
 
     def context(self, M, s, r):
-        q = torch.cat((s, r),dim=1).permute(0,2,3,1)
-        q = self.context_Linear(q).unsqueeze(dim=2)
-        TM = M.permute(0,2,3,1)
+        q = torch.cat((s, r),dim=1)
+        n,m = M.shape[2:]
+        q = self.context_Linear(q).unsqueeze(2).unsqueeze(1).unsqueeze(1)
+        q = q.repeat(1,n,m,1,1)
+        TM = M.permute(0,2,3,1).unsqueeze(3)
         tmp = torch.matmul(TM, q)
         shape = tmp.shape
         tmp = torch.softmax(tmp.reshape(tmp.shape[0], -1), dim=1).reshape(shape)
-        tmp = torch.sum(TM * tmp, dim=(1, 2))
+        tmp = torch.sum(TM * tmp, dim=(1, 2, 3))
         return tmp
 
     def write(self, M, pos, s, r, c):
-        x, y = pos
-        tmp = torch.cat((M[:, :, x, y], s, r, c), dim=1)
+        GM = torch.zeros(M.shape[0],M.shape[1])
+        for i in range(s.shape[0]):
+            GM[i] = M[i, :, pos[i][0], pos[i][1]]
+        tmp = torch.cat((GM, s, r, c), dim=1)
         tmp = self.write_Linear(tmp)
         return tmp
 
     def update(self, M, pos, w):
-        x, y = pos
-        M = M.permute(2,3,0,1)
-        M[x,y] = w
-        M = M.permute(2,3,0,1)
+        tmp = M.clone()
+        for i in range(M.shape[0]):
+            tmp[i, :, pos[i][0], pos[i][1]] = w[i]
+        return tmp
 
     def forward(self, M, obs, memory, pos):
         x = obs.image.transpose(1, 3).transpose(2, 3)
@@ -251,7 +256,7 @@ class NMAPModel(nn.Module, torch_ac.RecurrentACModel):
         r = self.read(M)
         c = self.context(M, embedding, r)
         w = self.write(M, pos, embedding, r, c)
-        self.update(M, pos, w)
+        newM = self.update(M, pos, w)
 
         input = torch.cat((r,c,w), dim=1)
 
@@ -261,7 +266,7 @@ class NMAPModel(nn.Module, torch_ac.RecurrentACModel):
         x = self.critic(input)
         value = x.squeeze(1)
 
-        return dist, value, memory
+        return dist, value, memory, newM
 
     def _get_embed_text(self, text):
         _, hidden = self.text_rnn(self.word_embedding(text))

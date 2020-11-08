@@ -9,6 +9,7 @@ import os
 
 import utils
 from model import ACModel
+from model import NMAPModel
 
 
 # Parse arguments
@@ -62,6 +63,12 @@ parser.add_argument("--recurrence", type=int, default=1,
                     help="number of time-steps gradient is backpropagated (default: 1). If > 1, a LSTM is added to the model to have memory.")
 parser.add_argument("--text", action="store_true", default=False,
                     help="add a GRU to the model to handle text input")
+parser.add_argument("--use-neural-map", type=int, default=0,
+                    help="add neural map to the model to extract features")
+parser.add_argument("--mapH", type=int, default=int,
+                    help="the whole map height")
+parser.add_argument("--mapW", type=int, default=int,
+                    help="the whole map width")
 
 args = parser.parse_args()
 
@@ -118,8 +125,10 @@ if "vocab" in status:
 txt_logger.info("Observations preprocessor loaded")
 
 # Load model
-
-acmodel = ACModel(obs_space, envs[0].action_space, args.mem, args.text)
+if(args.use_neural_map==0):
+    acmodel = ACModel(obs_space, envs[0].action_space, args.mem, args.text)
+else:
+    acmodel = NMAPModel(obs_space, envs[0].action_space, args.mem, args.text, args.mapH, args.mapW)
 if "model_state" in status:
     acmodel.load_state_dict(status["model_state"])
 acmodel.to(device)
@@ -135,7 +144,7 @@ if args.algo == "a2c":
 elif args.algo == "ppo":
     algo = torch_ac.PPOAlgo(envs, acmodel, device, args.frames_per_proc, args.discount, args.lr, args.gae_lambda,
                             args.entropy_coef, args.value_loss_coef, args.max_grad_norm, args.recurrence,
-                            args.optim_eps, args.clip_eps, args.epochs, args.batch_size, preprocess_obss)
+                            args.optim_eps, args.clip_eps, args.epochs, args.batch_size, preprocess_obss, args = args)
 else:
     raise ValueError("Incorrect algorithm name: {}".format(args.algo))
 
@@ -153,8 +162,8 @@ while num_frames < args.frames:
     # Update model parameters
 
     update_start_time = time.time()
-    exps, logs1 = algo.collect_experiences()
-    logs2 = algo.update_parameters(exps)
+    exps, logs1 = algo.collect_experiences(args)
+    logs2 = algo.update_parameters(exps, args)
     logs = {**logs1, **logs2}
     update_end_time = time.time()
 
