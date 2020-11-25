@@ -52,6 +52,8 @@ class PPOAlgo(BaseAlgo):
 
                 if self.acmodel.recurrent:
                     memory = exps.memory[inds]
+                    if(args.use_neural_map==1):
+                        M = exps.M[inds]
 
                 for i in range(self.recurrence):
                     # Create a sub-batch of experience
@@ -67,9 +69,9 @@ class PPOAlgo(BaseAlgo):
                             dist, value = self.acmodel(sb.obs)
                     else:
                         if self.acmodel.recurrent:
-                            dist, value, memory, M = self.acmodel(sb.M, sb.obs, memory * sb.mask, sb.pos)
+                            dist, value, memory, M = self.acmodel(M * sb.mask.unsqueeze(2).unsqueeze(3), sb.obs, memory * sb.mask, sb.pos)
                         else:
-                            dist, value, M = self.acmodel(sb.M, sb.obs, sb.pos)
+                            dist, value, M = self.acmodel(M * sb.mask.unsqueeze(2).unsqueeze(3), sb.obs, sb.pos)
 
                     entropy = dist.entropy().mean()
 

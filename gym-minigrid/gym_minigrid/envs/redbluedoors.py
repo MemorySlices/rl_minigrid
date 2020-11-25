@@ -45,7 +45,7 @@ class RedBlueDoorEnv(MiniGridEnv):
         red_door_opened_before = self.red_door.is_open
         blue_door_opened_before = self.blue_door.is_open
 
-        obs, reward, done, info = MiniGridEnv.step(self, action)
+        pos, obs, reward, done, info = MiniGridEnv.step(self, action)
 
         red_door_opened_after = self.red_door.is_open
         blue_door_opened_after = self.blue_door.is_open
@@ -63,7 +63,7 @@ class RedBlueDoorEnv(MiniGridEnv):
                 reward = 0
                 done = True
 
-        return obs, reward, done, info
+        return pos, obs, reward, done, info
 
 class RedBlueDoorEnv6x6(RedBlueDoorEnv):
     def __init__(self):

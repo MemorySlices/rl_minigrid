@@ -153,16 +153,14 @@ class NMAPModel(nn.Module, torch_ac.RecurrentACModel):
 
         # define layers for read
         self.read_conv = nn.Sequential(
-            nn.Conv2d(self.neural_map_dim, 8, (3, 3)),
-            nn.ReLU(),
-            nn.Conv2d(8, 8, (3, 3)),
+            nn.Conv2d(self.neural_map_dim, 3, (3, 3)),
             nn.ReLU()
         )
-        self.read_embedding_size = (self.h-4) * (self.w-4) * 8
+        self.read_embedding_size = (self.h-2) * (self.w-2) * 3
         self.read_Linear = nn.Sequential(
-            nn.Linear(self.read_embedding_size, 128),
+            nn.Linear(self.read_embedding_size, 32),
             nn.ReLU(),
-            nn.Linear(128, self.neural_map_dim)
+            nn.Linear(32, self.neural_map_dim)
         )
 
         # define layers for context
@@ -170,9 +168,9 @@ class NMAPModel(nn.Module, torch_ac.RecurrentACModel):
 
         # define layers for write
         self.write_Linear = nn.Sequential(
-            nn.Linear(3*self.neural_map_dim+self.embedding_size, 128),
+            nn.Linear(3*self.neural_map_dim+self.embedding_size, 32),
             nn.ReLU(),
-            nn.Linear(128, self.neural_map_dim)
+            nn.Linear(32, self.neural_map_dim)
         )
 
         self.observation_size = 3 * self.neural_map_dim

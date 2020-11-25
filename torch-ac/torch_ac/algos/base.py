@@ -139,9 +139,9 @@ class BaseAlgo(ABC):
                         dist, value = self.acmodel(preprocessed_obs)
                 else:
                     if self.acmodel.recurrent:
-                        dist, value, memory, M = self.acmodel(M, preprocessed_obs, self.memory * self.mask.unsqueeze(1), self.pos)
+                        dist, value, memory, M = self.acmodel(M * self.mask.unsqueeze(1).unsqueeze(2).unsqueeze(3), preprocessed_obs, self.memory * self.mask.unsqueeze(1), self.pos)
                     else:
-                        dist, value, M = self.acmodel(M, preprocessed_obs, self.pos)
+                        dist, value, M = self.acmodel(M * self.mask.unsqueeze(1).unsqueeze(2).unsqueeze(3), preprocessed_obs, self.pos)
             action = dist.sample()
 
             pos, obs, reward, done, _ = self.env.step(action.cpu().numpy())
