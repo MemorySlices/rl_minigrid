@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions.categorical import Categorical
 import torch_ac
+import numpy as np
 import copy
 
 
@@ -110,7 +111,7 @@ class ACModel(nn.Module, torch_ac.RecurrentACModel):
 
 
 class NMAPModel(nn.Module, torch_ac.RecurrentACModel):
-    def __init__(self, obs_space, action_space, use_memory=False, use_text=False, mapH=0, mapW=0):
+    def __init__(self, obs_space, action_space, use_memory=False, use_text=False, mapW=0, mapH=0):
         super().__init__()
 
         # Decide which components are enabled
@@ -129,15 +130,15 @@ class NMAPModel(nn.Module, torch_ac.RecurrentACModel):
         )
         n = obs_space["image"][0]
         m = obs_space["image"][1]
-        self.h = mapH
-        self.w = mapW
         # the feature dimension of Neural Map
         self.neural_map_dim = 32
         self.image_embedding_size = ((n-1)//2-2)*((m-1)//2-2)*64
+        self.h = mapH
+        self.w = mapW
 
         # Define memory
-        if self.use_memory:
-            self.memory_rnn = nn.LSTMCell(self.image_embedding_size, self.semi_memory_size)
+        # if self.use_memory:
+        #     self.memory_rnn = nn.LSTMCell(self.image_embedding_size, self.semi_memory_size)
 
         # Define text embedding
         if self.use_text:
@@ -153,15 +154,14 @@ class NMAPModel(nn.Module, torch_ac.RecurrentACModel):
 
         # define layers for read
         self.read_conv = nn.Sequential(
-            nn.Conv2d(self.neural_map_dim, 3, (3, 3)),
+            nn.Conv2d(self.neural_map_dim , 32, (2, 2)),
+            nn.ReLU(),
+            nn.MaxPool2d((2, 2)),
+            nn.Conv2d(32, 64, (2, 2)),
             nn.ReLU()
         )
-        self.read_embedding_size = (self.h-2) * (self.w-2) * 3
-        self.read_Linear = nn.Sequential(
-            nn.Linear(self.read_embedding_size, 32),
-            nn.ReLU(),
-            nn.Linear(32, self.neural_map_dim)
-        )
+        self.read_embedding_size = ((self.w-1)//2-1)*((self.h-1)//2-1)*64
+        self.read_Linear = nn.Linear(self.read_embedding_size, self.neural_map_dim)
 
         # define layers for context
         self.context_Linear = nn.Linear(self.neural_map_dim+self.embedding_size, self.neural_map_dim)
@@ -220,31 +220,28 @@ class NMAPModel(nn.Module, torch_ac.RecurrentACModel):
         return tmp
 
     def write(self, M, pos, s, r, c):
-        GM = torch.zeros(M.shape[0],M.shape[1])
-        for i in range(s.shape[0]):
-            GM[i] = M[i, :, pos[i][0], pos[i][1]]
+        shp = M.shape
+        p = shp[3] * pos[:, 0] + pos[:, 1]
+        p = p.unsqueeze(1).unsqueeze(2).repeat(1,32,1)
+        GM = torch.gather(M.reshape(shp[0], shp[1], -1), 2, p).squeeze()
         tmp = torch.cat((GM, s, r, c), dim=1)
         tmp = self.write_Linear(tmp)
         return tmp
 
     def update(self, M, pos, w):
-        tmp = M.clone()
-        for i in range(M.shape[0]):
-            tmp[i, :, pos[i][0], pos[i][1]] = w[i]
-        return tmp
+        shp = M.shape
+        p = shp[3] * pos[:, 0] + pos[:, 1]
+        p = p.unsqueeze(1).unsqueeze(2).repeat(1, 32, 1)
+        M = M.reshape(shp[0], shp[1], -1)
+        M = M.scatter(2, p, w.unsqueeze(2))
 
     def forward(self, M, obs, memory, pos):
+
         x = obs.image.transpose(1, 3).transpose(2, 3)
         x = self.image_conv(x)
         x = x.reshape(x.shape[0], -1)
 
-        if self.use_memory:
-            hidden = (memory[:, :self.semi_memory_size], memory[:, self.semi_memory_size:])
-            hidden = self.memory_rnn(x, hidden)
-            embedding = hidden[0]
-            memory = torch.cat(hidden, dim=1)
-        else:
-            embedding = x
+        embedding = x
 
         if self.use_text:
             embed_text = self._get_embed_text(obs.text)
@@ -254,7 +251,7 @@ class NMAPModel(nn.Module, torch_ac.RecurrentACModel):
         r = self.read(M)
         c = self.context(M, embedding, r)
         w = self.write(M, pos, embedding, r, c)
-        newM = self.update(M, pos, w)
+        self.update(M, pos, w)
 
         input = torch.cat((r,c,w), dim=1)
 
@@ -264,7 +261,7 @@ class NMAPModel(nn.Module, torch_ac.RecurrentACModel):
         x = self.critic(input)
         value = x.squeeze(1)
 
-        return dist, value, memory, newM
+        return dist, value, memory, M
 
     def _get_embed_text(self, text):
         _, hidden = self.text_rnn(self.word_embedding(text))

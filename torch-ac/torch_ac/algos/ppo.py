@@ -16,7 +16,7 @@ class PPOAlgo(BaseAlgo):
         num_frames_per_proc = num_frames_per_proc or 128
 
         super().__init__(envs, acmodel, device, num_frames_per_proc, discount, lr, gae_lambda, entropy_coef,
-                         value_loss_coef, max_grad_norm, recurrence, preprocess_obss, reshape_reward, args)
+                         value_loss_coef, max_grad_norm, recurrence, preprocess_obss, reshape_reward)
 
         self.clip_eps = clip_eps
         self.epochs = epochs
