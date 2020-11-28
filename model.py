@@ -154,17 +154,25 @@ class NMAPModel(nn.Module, torch_ac.RecurrentACModel):
 
         # define layers for read
         self.read_conv = nn.Sequential(
-            nn.Conv2d(self.neural_map_dim , 32, (2, 2)),
+            nn.Conv2d(self.neural_map_dim , 16, (3, 3), 1, 1),
             nn.ReLU(),
-            nn.MaxPool2d((2, 2)),
-            nn.Conv2d(32, 64, (2, 2)),
-            nn.ReLU()
+            nn.Conv2d(16, 16, (3, 3), 1, 1),
+            nn.ReLU(),
+            nn.Conv2d(16, 16, (3, 3), 1, 1),
         )
-        self.read_embedding_size = ((self.w-1)//2-1)*((self.h-1)//2-1)*64
-        self.read_Linear = nn.Linear(self.read_embedding_size, self.neural_map_dim)
+        self.read_embedding_size = self.w * self.h * 16
+        self.read_Linear = nn.Sequential(
+            nn.Linear(self.read_embedding_size, 128),
+            nn.ReLU(),
+            nn.Linear(128, self.neural_map_dim)
+        )
 
         # define layers for context
-        self.context_Linear = nn.Linear(self.neural_map_dim+self.embedding_size, self.neural_map_dim)
+        self.context_Linear = nn.Sequential(
+            nn.Linear(self.neural_map_dim+self.embedding_size, 128),
+            nn.ReLU(),
+            nn.Linear(128, self.neural_map_dim)
+        )
 
         # define layers for write
         self.write_Linear = nn.Sequential(
@@ -209,7 +217,7 @@ class NMAPModel(nn.Module, torch_ac.RecurrentACModel):
 
     def context(self, M, s, r):
         q = torch.cat((s, r),dim=1)
-        n,m = M.shape[2:]
+        n, m = M.shape[2:]
         q = self.context_Linear(q).unsqueeze(2).unsqueeze(1).unsqueeze(1)
         q = q.repeat(1,n,m,1,1)
         TM = M.permute(0,2,3,1).unsqueeze(3)
@@ -241,6 +249,13 @@ class NMAPModel(nn.Module, torch_ac.RecurrentACModel):
         x = self.image_conv(x)
         x = x.reshape(x.shape[0], -1)
 
+        # if self.use_memory:
+        #     hidden = (memory[:, :self.semi_memory_size], memory[:, self.semi_memory_size:])
+        #     hidden = self.memory_rnn(x, hidden)
+        #     embedding = hidden[0]
+        #     memory = torch.cat(hidden, dim=1)
+        # else:
+        #     embedding = x
         embedding = x
 
         if self.use_text:

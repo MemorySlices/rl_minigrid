@@ -78,12 +78,14 @@ class BaseAlgo(ABC):
 
         shape = (self.num_frames_per_proc, self.num_procs)
 
+        w, h = envs[0].width, envs[0].height
         self.pos, self.obs = self.env.reset()
         self.obss = [None]*(shape[0])
-        self.M = torch.zeros(*shape, 32, envs[0].width, envs[0].height, device=self.device)
         if self.acmodel.recurrent:
             self.memory = torch.zeros(shape[1], self.acmodel.memory_size, device=self.device)
             self.memories = torch.zeros(*shape, self.acmodel.memory_size, device=self.device)
+            self.M = torch.zeros(self.num_procs, 32, w, h, device=self.device)
+            self.Ms = torch.zeros(*shape, 32, envs[0].width, envs[0].height, device=self.device)
         self.poss = torch.zeros(*shape, 2, device=self.device).long()
         self.mask = torch.ones(shape[1], device=self.device)
         self.masks = torch.zeros(*shape, device=self.device)
@@ -126,7 +128,6 @@ class BaseAlgo(ABC):
         """
 
         h, w = self.env.envs[0].height, self.env.envs[0].width
-        M = torch.zeros(self.num_procs, 32, w, h).to(self.device)
         for i in range(self.num_frames_per_proc):
             # Do one agent-environment interaction
 
@@ -140,9 +141,9 @@ class BaseAlgo(ABC):
                         dist, value = self.acmodel(preprocessed_obs)
                 else:
                     if self.acmodel.recurrent:
-                        dist, value, memory, M = self.acmodel(M * self.mask.unsqueeze(1).unsqueeze(2).unsqueeze(3), preprocessed_obs, self.memory * self.mask.unsqueeze(1), pos)
+                        dist, value, memory, M = self.acmodel(self.M * self.mask.unsqueeze(1).unsqueeze(2).unsqueeze(3), preprocessed_obs, self.memory * self.mask.unsqueeze(1), pos)
                     else:
-                        dist, value, M = self.acmodel(M * self.mask.unsqueeze(1).unsqueeze(2).unsqueeze(3), preprocessed_obs, pos)
+                        dist, value, M = self.acmodel(self.M * self.mask.unsqueeze(1).unsqueeze(2).unsqueeze(3), preprocessed_obs, pos)
             action = dist.sample()
 
             pos, obs, reward, done, _ = self.env.step(action.cpu().numpy())
@@ -150,13 +151,15 @@ class BaseAlgo(ABC):
             # Update experiences values
 
             self.obss[i] = self.obs
-            self.M[i] = M
             self.obs = obs
             self.pos = pos
             self.poss[i] = torch.tensor(pos).long()
             if self.acmodel.recurrent:
                 self.memories[i] = self.memory
                 self.memory = memory
+                if args.use_neural_map == 1:
+                    self.Ms[i] = self.M
+                    self.M = M
             self.masks[i] = self.mask
             self.mask = 1 - torch.tensor(done, device=self.device, dtype=torch.float)
             self.actions[i] = action
@@ -199,9 +202,9 @@ class BaseAlgo(ABC):
                     _, next_value = self.acmodel(preprocessed_obs)
             else:
                 if self.acmodel.recurrent:
-                    _, next_value, _, _ = self.acmodel(M, preprocessed_obs, self.memory * self.mask.unsqueeze(1), pos)
+                    _, next_value, _, _ = self.acmodel(self.M, preprocessed_obs, self.memory * self.mask.unsqueeze(1), pos)
                 else:
-                    _, next_value, _ = self.acmodel(M, preprocessed_obs, pos)
+                    _, next_value, _ = self.acmodel(self.M, preprocessed_obs, pos)
 
         for i in reversed(range(self.num_frames_per_proc)):
             next_mask = self.masks[i+1] if i < self.num_frames_per_proc - 1 else self.mask
@@ -223,13 +226,13 @@ class BaseAlgo(ABC):
         exps.obs = [self.obss[i][j]
                     for j in range(self.num_procs)
                     for i in range(self.num_frames_per_proc)]
-        exps.M = self.M.transpose(0,1).reshape(-1, *self.M.shape[2:])
         exps.pos = self.poss.transpose(0,1).reshape(-1, *self.poss.shape[2:])
         if self.acmodel.recurrent:
             # T x P x D -> P x T x D -> (P * T) x D
             exps.memory = self.memories.transpose(0, 1).reshape(-1, *self.memories.shape[2:])
             # T x P -> P x T -> (P * T) x 1
             exps.mask = self.masks.transpose(0, 1).reshape(-1).unsqueeze(1)
+            exps.M = self.Ms.transpose(0, 1).reshape(-1, *self.Ms.shape[2:])
         # for all tensors below, T x P -> P x T -> P * T
         exps.action = self.actions.transpose(0, 1).reshape(-1)
         exps.value = self.values.transpose(0, 1).reshape(-1)
